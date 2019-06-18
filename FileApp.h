@@ -14,6 +14,8 @@
 #define MODE_DOWNLOAD "-d"
 #define SERVER_MAX_SESSIONS 3
 #define MAXHOSTNAME 1000
+#define FILE_CONTENT_LENGTH 4096
+#define FILE_NAME_LENGTH 256
 
 typedef struct { char* directoryPath; int maxConnections; sockaddr_in socket; } Server;
 
