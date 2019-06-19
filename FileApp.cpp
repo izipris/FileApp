@@ -11,57 +11,34 @@
 #include <cstdlib>
 #include <sys/stat.h>
 #include "FileApp.h"
+#include "prints.h"
 
-long FdGetFileSize(int fd)
-{
-    struct stat stat_buf;
-    int rc = fstat(fd, &stat_buf);
-    return rc == 0 ? stat_buf.st_size : -1;
+char* getIpFromSocket(int socketCode){
+    struct sockaddr_in addr;
+    socklen_t addr_size = sizeof(struct sockaddr_in);
+    int res = getpeername(socketCode, (struct sockaddr *)&addr, &addr_size);
+    return inet_ntoa(addr.sin_addr);
 }
 
-int readData(int fd, char *buf, long n) {
-    int bcount; /* counts bytes read */
-    int br; /* bytes read this pass */
-    bcount= 0;
-    br = 0;
-    while (bcount < n) { /* loop until full buffer */
-        br = read(fd, buf, n-bcount);
-        if (br > 0) {
-            std::cout << "Reading" << std::endl;
-            bcount += br;
-            buf += br;
-        }
-        if (br < 1) {
-            return CODE_ERROR;
-        }
-    }
-    return(bcount);
-}
-
-int writeData(int socketCode, char *name, int nameLen, char *content, int contentLen) {
-    int n = write(socketCode,&nameLen,sizeof(int));
-    n = write(socketCode,name,nameLen);
-    n = write(socketCode,&contentLen,sizeof(int));
-    n = write(socketCode,content,contentLen);
+int writeFileToSocket(int socketCode, std::string fileName){
+    std::ifstream file(fileName);
+    std::string contents((std::istreambuf_iterator<char>(file)),
+                         std::istreambuf_iterator<char>());
+    file.close();
+    char fileData[contents.size() + 1];
+    strcpy(fileData, contents.c_str());
+    int len = strlen(fileData);
+    int n = write(socketCode, &len, sizeof(int));
+    n = write(socketCode, fileData, len);
     return n;
 }
 
-int createFileFromSocket(int socketCode){
-    char fileName[FILE_NAME_LENGTH + sizeof(int)];
-    bzero(fileName,FILE_NAME_LENGTH + sizeof(int));
-    int nameLen;
-    int n = read(socketCode,&nameLen,sizeof(int));
-    n = read(socketCode,fileName,nameLen);
-
-    char fileData[FILE_CONTENT_LENGTH + sizeof(int)];
-    bzero(fileData,FILE_CONTENT_LENGTH + sizeof(int));
-    int contentLen;
-    n = read(socketCode,&contentLen,sizeof(int));
-    n = read(socketCode,fileData,contentLen);
-    std::ofstream file;
-    file.open (fileName);
-    file << fileData;
-    file.close();
+int readFileFromSocket(int socketCode, char* data){
+    int len;
+    int n = read(socketCode, &len, sizeof(int));
+    char fileData[len + 1];
+    n = read(socketCode, fileData, len);
+    strcpy(data, fileData);
     return n;
 }
 
@@ -71,9 +48,7 @@ int establishServer(unsigned short port, Server* srv){
     struct sockaddr_in socketAddress;
     struct hostent *localhost;
     gethostname(serverName, MAXHOSTNAME);
-    std::cout << "Got host name" << std::endl;
     localhost = gethostbyname(serverName);
-    std::cout << "Got host details" << std::endl;
     if (localhost == NULL){
         return CODE_ERROR;
     }
@@ -82,25 +57,21 @@ int establishServer(unsigned short port, Server* srv){
     memcpy(&socketAddress.sin_addr, localhost->h_addr_list[0], localhost->h_length);
     socketAddress.sin_port = htons(port);
     srv->socket = socketAddress;
-    std::cout << "Initialized socket" << std::endl;
     socketCreationCode = socket(AF_INET, SOCK_STREAM, 0);
-    std::cout << "Created socket" << std::endl;
     if (socketCreationCode < 0){
         return CODE_ERROR;
     }
     int socketBindCode = bind(socketCreationCode, (struct sockaddr*)&socketAddress, sizeof(struct sockaddr_in));
-    std::cout << "Binded socket" << std::endl;
     if (socketBindCode < 0){
         close(socketCreationCode);
         return CODE_ERROR;
     }
     listen(socketCreationCode, srv->maxConnections);
-    std::cout << "Listening..." << std::endl;
     return socketCreationCode;
 }
 
 int getConnection(int serverSocketCode){
-    std::cout << "Waiting for a client..." << std::endl;
+    printf(WAIT_FOR_CLIENT_STR);
     int socketConnectionCode;
     socketConnectionCode = accept(serverSocketCode, NULL, NULL);
     if (socketConnectionCode < 0){
@@ -115,18 +86,15 @@ int callSocket(char* ipAddress, int port){
     socketAddress.sin_family = AF_INET;
     socketAddress.sin_port = htons(port);
     inet_aton(ipAddress, &(socketAddress.sin_addr));
-    std::cout << "Initialized socket" << std::endl;
     int socketCreationCode = socket(socketAddress.sin_family, SOCK_STREAM, 0);
     if (socketCreationCode < 0){
         return CODE_ERROR;
     }
-    std::cout << "Reached Socket" << std::endl;
     int socketConnectionCode = connect(socketCreationCode, (struct sockaddr*)&socketAddress, sizeof(socketAddress));
     if (socketConnectionCode < 0){
         close(socketConnectionCode);
         return CODE_ERROR;
     }
-    std::cout << "Connected Socket" << std::endl;
     return socketCreationCode;
 }
 
@@ -136,37 +104,89 @@ int main(int argc, char** argv) {
     std::string instanceMode = argv[1];
     Server srv;
     if (strcmp(argv[1], MODE_SERVER) == 0){
-        std::cout << "Server Mode" << std::endl;
         srv.directoryPath = argv[2];
         srv.maxConnections = SERVER_MAX_SESSIONS;
         int serverEstablishmentCode = establishServer(atoi(argv[3]), &srv);
         if (serverEstablishmentCode < 0){
             exit(CODE_ERROR);
         }
-        std::cout << "Server bind IP: " << inet_ntoa(*(&srv.socket.sin_addr)) << std::endl;
+        printf(SERVERS_BIND_IP_STR, inet_ntoa(*(&srv.socket.sin_addr)));
+        mkdir(srv.directoryPath, ACCESSPERMS);
         int connectionSocketCode;
         while ((connectionSocketCode = getConnection(serverEstablishmentCode)) != CODE_ERROR) { // TODO: The 'quit' thing
-            std::cout << "Got Connection from: " << connectionSocketCode << std::endl;
-            int rd = createFileFromSocket(connectionSocketCode);
+            //Read & Print metadata
+            char metadata[FILE_CONTENT_LENGTH];
+            readFileFromSocket(connectionSocketCode, metadata);
+            char act;
+            std::string filePath;
+            char* chars_array = strtok(metadata, "#");
+            for (int i = 0; i < 4; ++i){
+                switch (i){
+                    case 0:
+                        printf(CLIENT_IP_STR, chars_array);
+                        break;
+                    case 1:
+                        act = chars_array[1];
+                        printf(CLIENT_COMMAND_STR, act);
+                        break;
+                    case 2:
+                        printf(FILENAME_STR, chars_array);
+                        break;
+                    case 3:
+                        filePath = srv.directoryPath;
+                        filePath.append("/");
+                        filePath.append(chars_array);
+                        std::cout << "file_path: " << filePath << "\n";
+                        break;
+                    default:
+                        exit(CODE_ERROR);
+                }
+                chars_array = strtok(NULL, "#");
+            }
+            // Perform action
+            if (act == 'u') {
+
+                char fileData[FILE_CONTENT_LENGTH];
+                readFileFromSocket(connectionSocketCode, fileData);
+                std::ofstream uploadedFile;
+                uploadedFile.open(filePath);
+                uploadedFile << fileData;
+                uploadedFile.close();
+            } else if (act == 'd'){
+                // Send the desired file to the socket
+                writeFileToSocket(connectionSocketCode, filePath);
+            }
         }
-    } else if (strcmp(argv[1], MODE_UPLOAD) == 0){
-        std::cout << "Upload Mode" << std::endl;
+    } else{
+
+        char* command = argv[1];
         char* localPath = argv[2];
-        int localPathFd = open(localPath, O_RDONLY);
         char* remotePath = argv[3];
         int port = atoi(argv[4]);
         char* ipAddress = argv[5];
         int serverSocketCode = callSocket(ipAddress, port);
-        char bufferName[FILE_NAME_LENGTH];
-        char bufferContent[FILE_CONTENT_LENGTH];
-        bzero(bufferName,FILE_NAME_LENGTH);
-        bzero(bufferContent,FILE_CONTENT_LENGTH);
-        memcpy(bufferName, remotePath, strlen(remotePath));
-        read(localPathFd, bufferContent, FILE_CONTENT_LENGTH - 1);
-        int wr = writeData(serverSocketCode, bufferName, strlen(bufferName), bufferContent, strlen(bufferContent));
-        close(localPathFd);
+        // Write metadata of request to server
+        std::ofstream metadata;
+        metadata.open ("metadata.txt");
+        metadata << getIpFromSocket(serverSocketCode) << "#" << command << "#" << localPath << "#" << remotePath << "#";
+        metadata.close();
+        writeFileToSocket(serverSocketCode, "metadata.txt");
+        remove("metadata.txt");
 
-    } else if (strcmp(argv[1], MODE_DOWNLOAD) == 0){
+        if (strcmp(argv[1], MODE_UPLOAD) == 0){
+            // Send the local file to the socket
+            writeFileToSocket(serverSocketCode, localPath);
+        }
+        else if (strcmp(argv[1], MODE_DOWNLOAD) == 0){
+            // Read the file from the server
+            char fileData[FILE_CONTENT_LENGTH];
+            readFileFromSocket(serverSocketCode, fileData);
+            // Create the local file
+            std::ofstream downloadedFile;
+            downloadedFile.open(localPath);
+            downloadedFile << fileData;
+            downloadedFile.close();
+        }
 
     }
     return 0;
