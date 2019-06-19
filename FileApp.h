@@ -8,6 +8,10 @@
 #ifndef FILEAPP_FILEAPP_H
 #define FILEAPP_FILEAPP_H
 
+#define CODE_DONE 0
+#define CODE_ERROR_FILENAME 1
+#define CODE_ERROR_MYFILE 2
+#define CODE_ERROR_REMOTE 3
 #define CODE_ERROR -1
 #define MODE_SERVER "-s"
 #define MODE_UPLOAD "-u"
@@ -16,6 +20,7 @@
 #define MAXHOSTNAME 1000
 #define FILE_CONTENT_LENGTH 4096
 #define FILE_NAME_LENGTH 256
+#define DELIMITER "#"
 
 typedef struct { char* directoryPath; int maxConnections; sockaddr_in socket; } Server;
 
