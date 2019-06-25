@@ -21,6 +21,8 @@
 #define FILE_CONTENT_LENGTH 4096
 #define FILE_NAME_LENGTH 256
 #define DELIMITER "#"
+#define QUIT "quit"
+#define FILE_TOO_BIG_STR "file is to big (> 4095)\n"
 
 typedef struct { char* directoryPath; int maxConnections; sockaddr_in socket; } Server;
 
