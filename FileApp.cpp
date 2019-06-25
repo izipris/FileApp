@@ -18,7 +18,10 @@ char* getIpFromSocket(int socketCode){
     struct sockaddr_in addr;
     socklen_t addr_size = sizeof(struct sockaddr_in);
     int res = getpeername(socketCode, (struct sockaddr *)&addr, &addr_size);
-    return inet_ntoa(addr.sin_addr);
+    if (res > CODE_ERROR) {
+        return inet_ntoa(addr.sin_addr);
+    }
+    exit(CODE_ERROR);
 }
 
 int isFileExist(char* fileName){
@@ -137,6 +140,52 @@ int callSocket(char* ipAddress, int port){
     return socketCreationCode;
 }
 
+void printClientSummary(char code){
+    if (code == '0'){
+        printf(SUCCESS_STR);
+    } else if (code == '1'){
+        printf(FILE_NAME_ERROR_STR);
+        printf(FAILURE_STR);
+        exit(CODE_ERROR);
+    } else if (code == '2'){
+        printf(MY_FILE_ERROR_STR);
+        printf(FAILURE_STR);
+        exit(CODE_ERROR);
+    } else if (code == '3'){
+        printf(REMOTE_FILE_ERROR_STR);
+        printf(FAILURE_STR);
+        exit(CODE_ERROR);
+    }
+}
+
+void printServerMetadata(int connectionSocketCode, std::string dir, std::string& filePath, char& act){
+    char metadata[FILE_CONTENT_LENGTH];
+    readFileFromSocket(connectionSocketCode, metadata);
+    char* chars_array = strtok(metadata, DELIMITER);
+    for (int i = 0; i < 4; ++i){
+        switch (i){
+            case 0:
+                printf(CLIENT_IP_STR, chars_array);
+                break;
+            case 1:
+                act = chars_array[1];
+                printf(CLIENT_COMMAND_STR, act);
+                break;
+            case 2:
+                printf(FILENAME_STR, chars_array);
+                break;
+            case 3:
+                filePath = dir;
+                filePath.append("/");
+                filePath.append(chars_array);
+                std::cout << "file_path: " << filePath << "\n";
+                break;
+            default:
+                exit(CODE_ERROR);
+        }
+        chars_array = strtok(NULL, DELIMITER);
+    }
+}
 
 
 int main(int argc, char** argv) {
@@ -167,81 +216,52 @@ int main(int argc, char** argv) {
                     close(serverEstablishmentCode);
                     return 0;
                 }
-            } else{
-                if ((connectionSocketCode = getConnection(serverEstablishmentCode)) != CODE_ERROR){
-                    //Read & Print metadata
-                    char metadata[FILE_CONTENT_LENGTH];
-                    readFileFromSocket(connectionSocketCode, metadata);
-                    char act;
-                    std::string filePath;
-                    char* chars_array = strtok(metadata, DELIMITER);
-                    for (int i = 0; i < 4; ++i){
-                        switch (i){
-                            case 0:
-                                printf(CLIENT_IP_STR, chars_array);
-                                break;
-                            case 1:
-                                act = chars_array[1];
-                                printf(CLIENT_COMMAND_STR, act);
-                                break;
-                            case 2:
-                                printf(FILENAME_STR, chars_array);
-                                break;
-                            case 3:
-                                filePath = srv.directoryPath;
-                                filePath.append("/");
-                                filePath.append(chars_array);
-                                std::cout << "file_path: " << filePath << "\n";
-                                break;
-                            default:
-                                exit(CODE_ERROR);
-                        }
-                        chars_array = strtok(NULL, DELIMITER);
-                    }
-                    // Do some checks
-                    bool passed = true;
-                    std::string dir = srv.directoryPath;
-                    size_t pathSlashNumber = std::count(filePath.begin(), filePath.end(), '/');
-                    size_t dirSlashNumber = std::count(dir.begin(), dir.end(), '/') + 1;
-                    if (filePath.size() >= FILE_NAME_LENGTH || (pathSlashNumber - dirSlashNumber > 0)){
-                        passed = false;
-                        printf(FILE_NAME_ERROR_STR);
-                        writeErrorToSocket(connectionSocketCode, CODE_ERROR_FILENAME);
-                    }
-                    // Perform action
-                    if (passed && act == 'u') {
-                        // Read the content from the socket
-                        char fileData[FILE_CONTENT_LENGTH];
-                        readFileFromSocket(connectionSocketCode, fileData);
-                        std::cout << "Write: " << fileData << std::endl;
-                        if (fileData[0] == '3'){
-                            passed = false;
-                            printf(REMOTE_FILE_ERROR_STR);
-                            writeErrorToSocket(connectionSocketCode, CODE_ERROR_MYFILE);
-                        } else {
-                            // Create the file on the server
-                            std::ofstream uploadedFile;
-                            uploadedFile.open(filePath, std::ios_base::out | std::ios_base::binary);
-                            uploadedFile << fileData;
-                            uploadedFile.close();
-                        }
-                    } else if (passed && act == 'd'){
-                        // Send the desired file to the socket
-                        int wr = writeFileToSocket(connectionSocketCode, filePath);
-                        if (wr < 0){
-                            writeErrorToSocket(connectionSocketCode, CODE_ERROR_REMOTE);
-                            passed = false;
-                            printf(MY_FILE_ERROR_STR);
-                        }
-                    }
-                    if (passed){
-                        writeErrorToSocket(connectionSocketCode, CODE_DONE);
-                        printf(SUCCESS_STR);
-                    } else{
-                        printf(FAILURE_STR);
-                    }
-                    close(connectionSocketCode);
+            } else if ((connectionSocketCode = getConnection(serverEstablishmentCode)) != CODE_ERROR){
+                char act;
+                std::string filePath;
+                printServerMetadata(connectionSocketCode, srv.directoryPath, filePath, act);
+                // Do some checks
+                bool passed = true;
+                std::string dir = srv.directoryPath;
+                size_t pathSlashNumber = std::count(filePath.begin(), filePath.end(), '/');
+                size_t dirSlashNumber = std::count(dir.begin(), dir.end(), '/') + 1;
+                if (filePath.size() >= FILE_NAME_LENGTH || (pathSlashNumber - dirSlashNumber > 0)){
+                    passed = false;
+                    printf(FILE_NAME_ERROR_STR);
+                    writeErrorToSocket(connectionSocketCode, CODE_ERROR_FILENAME);
                 }
+                // Perform action
+                if (passed && act == SERVER_U_MODE) {
+                    // Read the content from the socket
+                    char fileData[FILE_CONTENT_LENGTH];
+                    readFileFromSocket(connectionSocketCode, fileData);
+                    if (fileData[0] == '3'){
+                        passed = false;
+                        printf(REMOTE_FILE_ERROR_STR);
+                        writeErrorToSocket(connectionSocketCode, CODE_ERROR_MYFILE);
+                    } else {
+                        // Create the file on the server
+                        std::ofstream uploadedFile;
+                        uploadedFile.open(filePath, std::ios_base::out | std::ios_base::binary);
+                        uploadedFile << fileData;
+                        uploadedFile.close();
+                    }
+                } else if (passed && act == SERVER_D_MODE){
+                    // Send the desired file to the socket
+                    int wr = writeFileToSocket(connectionSocketCode, filePath);
+                    if (wr < 0){
+                        writeErrorToSocket(connectionSocketCode, CODE_ERROR_REMOTE);
+                        passed = false;
+                        printf(MY_FILE_ERROR_STR);
+                    }
+                }
+                if (passed){
+                    writeErrorToSocket(connectionSocketCode, CODE_DONE);
+                    printf(SUCCESS_STR);
+                } else{
+                    printf(FAILURE_STR);
+                }
+                close(connectionSocketCode);
             }
         }
     } else{
@@ -256,11 +276,12 @@ int main(int argc, char** argv) {
         }
         // Write metadata of request to server
         std::ofstream metadata;
-        metadata.open ("metadata.txt");
-        metadata << getIpFromSocket(serverSocketCode) << DELIMITER << command << DELIMITER << localPath << DELIMITER << remotePath << DELIMITER;
+        metadata.open (MD_FILE_NAME);
+        metadata << getIpFromSocket(serverSocketCode) << DELIMITER << command << DELIMITER <<
+            localPath << DELIMITER << remotePath << DELIMITER;
         metadata.close();
-        writeFileToSocket(serverSocketCode, "metadata.txt");
-        remove("metadata.txt");
+        writeFileToSocket(serverSocketCode, MD_FILE_NAME);
+        remove(MD_FILE_NAME);
 
         char code[2];
         if (strcmp(argv[1], MODE_UPLOAD) == 0){
@@ -292,22 +313,8 @@ int main(int argc, char** argv) {
                 strcpy(code, "0");
             }
         }
-        // Print Summary
-        if (code[0] == '0'){
-            printf(SUCCESS_STR);
-        } else if (code[0] == '1'){
-            printf(FILE_NAME_ERROR_STR);
-            printf(FAILURE_STR);
-            exit(CODE_ERROR);
-        } else if (code[0] == '2'){
-            printf(MY_FILE_ERROR_STR);
-            printf(FAILURE_STR);
-            exit(CODE_ERROR);
-        } else if (code[0] == '3'){
-            printf(REMOTE_FILE_ERROR_STR);
-            printf(FAILURE_STR);
-            exit(CODE_ERROR);
-        }
+        printClientSummary(code[0]);
+        close(serverSocketCode);
     }
     return 0;
 }

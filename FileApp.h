@@ -22,7 +22,9 @@
 #define FILE_NAME_LENGTH 256
 #define DELIMITER "#"
 #define QUIT "quit"
-#define FILE_TOO_BIG_STR "file is to big (> 4095)\n"
+#define MD_FILE_NAME "metadata.txt"
+#define SERVER_D_MODE 'd'
+#define SERVER_U_MODE 'u'
 
 typedef struct { char* directoryPath; int maxConnections; sockaddr_in socket; } Server;
 
